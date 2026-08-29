@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Builds
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# Prisma
+backend/prisma/migrations/dev.db*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# k6 results
+stress-tests/results/
+
+# Playwright MCP artifacts
+.playwright-mcp/
