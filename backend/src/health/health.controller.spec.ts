@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
 import { ServiceUnavailableException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { DatabaseService } from '../database/database.service.js';
+import { PrismaService } from '../database/prisma.service.js';
 import { RedisService } from '../redis/redis.service.js';
 import { HealthController } from './health.controller.js';
 
@@ -17,7 +17,7 @@ describe('HealthController', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [HealthController],
       providers: [
-        { provide: DatabaseService, useValue: database },
+        { provide: PrismaService, useValue: database },
         { provide: RedisService, useValue: redis },
       ],
     }).compile();

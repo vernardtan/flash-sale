@@ -11,3 +11,7 @@ process.env.REDIS_PORT ??= '6379';
 process.env.DATABASE_NAME ??= 'flash_sale';
 process.env.DATABASE_USER ??= 'flash_sale';
 process.env.DATABASE_PASSWORD ??= 'flash_sale_dev';
+// e2e tests use a dedicated database so they never touch development data.
+// database.e2e-spec.ts creates and migrates it before running.
+process.env.DATABASE_URL ??=
+  'postgresql://flash_sale:flash_sale_dev@localhost:5432/flash_sale_test';

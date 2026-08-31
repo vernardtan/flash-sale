@@ -1,5 +1,5 @@
 import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service.js';
+import { PrismaService } from '../database/prisma.service.js';
 import { RedisService } from '../redis/redis.service.js';
 
 export interface HealthResponse {
@@ -13,7 +13,7 @@ export interface HealthResponse {
 @Controller('health')
 export class HealthController {
   constructor(
-    private readonly database: DatabaseService,
+    private readonly database: PrismaService,
     private readonly redis: RedisService,
   ) {}
 
