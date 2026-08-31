@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "CheckoutStatus" AS ENUM ('PENDING', 'COMPLETED', 'EXPIRED', 'CANCELLED');
+CREATE TYPE "CheckoutStatus" AS ENUM ('PENDING', 'PROCESSING', 'COMPLETED', 'EXPIRED', 'CANCELLED', 'FAILED');
 
 -- CreateTable
 CREATE TABLE "products" (

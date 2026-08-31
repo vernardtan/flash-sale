@@ -47,7 +47,7 @@ Product 1 ──── * FlashSale
 
 - **products** — catalog + inventory. `total_stock >= 0`, `0 <= remaining_stock <= total_stock` (CHECK constraints). Price/currency with `DECIMAL(12,2)`; `is_enabled` controls whether the product can be sold at all.
 - **flash_sales** — sale window per product. CHECK `end_time > start_time`. Sale status (UPCOMING/ACTIVE/ENDED/SOLD_OUT/DISABLED) is **derived**, never persisted.
-- **checkouts** — a purchase intent. `request_id` unique (client-generated idempotency handle for Phase 4), `quantity > 0` (generic; the flash-sale rule `quantity = 1` is enforced in the business layer), price/currency **snapshot**, `payment_method` (providers mocked), status `PENDING/COMPLETED/EXPIRED/CANCELLED`, `expires_at`.
+- **checkouts** — a purchase intent. `request_id` is a server-generated unique idempotency handle created during checkout; the client receives it and includes it in the transaction request. `quantity > 0` (generic; the flash-sale rule `quantity = 1` is enforced in the business layer), price/currency **snapshot**, `payment_method` (providers mocked), status `PENDING/PROCESSING/COMPLETED/EXPIRED/CANCELLED/FAILED`, `expires_at`.
 - **purchases** — a fulfilled checkout. `UNIQUE(user_id)` is the authoritative one-item-per-user guarantee under concurrency; `UNIQUE(request_id)` means a checkout completes at most once. Full price snapshot.
 
 Design notes:

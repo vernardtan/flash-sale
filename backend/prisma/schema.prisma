@@ -22,9 +22,11 @@ datasource db {
 
 enum CheckoutStatus {
   PENDING
+  PROCESSING
   COMPLETED
   EXPIRED
   CANCELLED
+  FAILED
 }
 
 model Product {

@@ -196,6 +196,43 @@ describe('Database schema (e2e)', () => {
     });
   });
 
+  describe('checkout status enum', () => {
+    it('persists PROCESSING and FAILED statuses', async () => {
+      const product = await createProduct();
+      const now = Date.now();
+
+      const processing = await prisma.checkout.create({
+        data: {
+          requestId: 'req-processing',
+          userId: 'user-processing',
+          productId: product.id,
+          quantity: 1,
+          unitPrice: '1999.00',
+          currency: 'PHP',
+          paymentMethod: 'MOCK_CARD',
+          status: 'PROCESSING',
+          expiresAt: new Date(now + 15 * 60 * 1000),
+        },
+      });
+      expect(processing.status).toBe('PROCESSING');
+
+      const failed = await prisma.checkout.create({
+        data: {
+          requestId: 'req-failed',
+          userId: 'user-failed',
+          productId: product.id,
+          quantity: 1,
+          unitPrice: '1999.00',
+          currency: 'PHP',
+          paymentMethod: 'MOCK_CARD',
+          status: 'FAILED',
+          expiresAt: new Date(now + 15 * 60 * 1000),
+        },
+      });
+      expect(failed.status).toBe('FAILED');
+    });
+  });
+
   describe('check constraints', () => {
     it('rejects negative remaining_stock', async () => {
       await expectCheckViolation(
