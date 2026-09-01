@@ -2,7 +2,6 @@
 
 A high-throughput flash sale backend with a React frontend, fully Dockerized. The flash-sale product is limited stock and one per user; regular products are also supported and can be repurchased.
 
-**Current status: Phase 4 — business APIs & purchase flow.** The full flash-sale flow (browse → checkout → transaction → purchase) is implemented with PostgreSQL-enforced concurrency guarantees. Stress testing with k6 lands in Phase 5+.
 
 ## Quick start
 
@@ -242,7 +241,6 @@ Design notes:
 
 - **PostgreSQL is authoritative** for inventory, checkouts, and purchases. Redis never decides correctness.
 - **Price snapshots**: checkout and purchase copy `unit_price`/`currency` (and `total_amount`) so later product price changes never alter existing orders.
-- **No `transactions` table**: the Phase 4 "transaction" is the atomic business operation (valid checkout + eligible user + active sale + available stock → purchase), not an entity.
 - All timestamps are `TIMESTAMPTZ` and treated as UTC end to end.
 
 ## Database commands
