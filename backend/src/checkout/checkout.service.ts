@@ -7,17 +7,8 @@ import { ApiException } from '../common/errors/api.exception.js';
 import { SaleService } from '../sale/sale.service.js';
 import { isValidPaymentMethod } from '../payment/payment-methods.js';
 import { CreateCheckoutDto } from './dto/create-checkout.dto.js';
-
-export interface CheckoutResponse {
-  requestId: string;
-  checkoutId: string;
-  status: 'PENDING';
-  productId: string;
-  quantity: number;
-  unitPrice: string;
-  currency: string;
-  expiresAt: string;
-}
+import { CheckoutResponse } from './dto/checkout-response.dto.js';
+import type { FlashSale, Prisma, Product } from '@prisma/client';
 
 @Injectable()
 export class CheckoutService {
@@ -32,21 +23,36 @@ export class CheckoutService {
    * Starts a checkout. Deliberately does NOT decrement or reserve stock —
    * inventory is consumed only by the final transaction.
    *
-   * The requestId is generated here (never accepted from the client) and
+   * The requestId is generated here and
    * acts as the idempotency handle for the subsequent transaction.
    */
   async createCheckout(dto: CreateCheckoutDto): Promise<CheckoutResponse> {
+    const { product, flashSale } = await this.saleService.assertPurchasable(dto.productId);
+    await this.validate(dto, flashSale);
+    const checkout = await this.saveCheckout(dto, product);
+
+    return {
+      requestId: checkout.requestId,
+      checkoutId: checkout.id,
+      status: 'PENDING',
+      productId: checkout.productId,
+      quantity: checkout.quantity,
+      unitPrice: checkout.unitPrice.toFixed(2),
+      currency: checkout.currency,
+      expiresAt: checkout.expiresAt.toISOString()
+    };
+  }
+  
+  async validate(dto: CreateCheckoutDto, flashSale: FlashSale) {
+    
     if (!isValidPaymentMethod(dto.paymentMethod)) {
       throw ApiException.invalidPaymentMethod();
     }
-
-    const { product, flashSale } =
-      await this.saleService.assertPurchasable(dto.productId);
-
+    if (!flashSale && dto.quantity <= 0) {
+      throw ApiException.invalidQuantity('Quantity must be greater than 0.');
+    }
 
     if (flashSale) {
-      // Flash-sale products are strictly limited to one unit per checkout.
-      // Regular products must simply order a positive quantity.
       if (dto.quantity !== 1) throw ApiException.invalidQuantity(
         'Quantity must be exactly 1 for the flash-sale product.',
       );
@@ -57,11 +63,9 @@ export class CheckoutService {
       });
       if (existingPurchase) throw ApiException.alreadyPurchased();
     }
+  }
 
-    if (!flashSale && dto.quantity <= 0) {
-      throw ApiException.invalidQuantity('Quantity must be greater than 0.');
-    }
-
+  async saveCheckout(dto: CreateCheckoutDto, product: Product) {
     const expirationSeconds = this.config.get<number>(
       'CHECKOUT_EXPIRATION_SECONDS',
       900,
@@ -70,30 +74,17 @@ export class CheckoutService {
       this.clock.now().getTime() + expirationSeconds * 1000,
     );
 
-    const checkout = await this.prisma.checkout.create({
+    return await this.prisma.checkout.create({
       data: {
         requestId: randomUUID(),
         userId: dto.userId,
         productId: product.id,
         quantity: dto.quantity,
-        // Price snapshot: later product price changes must not alter this
-        // checkout or the resulting order.
         unitPrice: product.price,
         currency: product.currency,
         paymentMethod: dto.paymentMethod,
-        expiresAt,
-      },
+        expiresAt
+      }
     });
-
-    return {
-      requestId: checkout.requestId,
-      checkoutId: checkout.id,
-      status: 'PENDING',
-      productId: checkout.productId,
-      quantity: checkout.quantity,
-      unitPrice: checkout.unitPrice.toFixed(2),
-      currency: checkout.currency,
-      expiresAt: checkout.expiresAt.toISOString(),
-    };
   }
 }
