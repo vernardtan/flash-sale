@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { Logger } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module.js';
 
 async function bootstrap() {
@@ -8,6 +8,7 @@ async function bootstrap() {
   // Permissive for local development; Phase 5 replaces this with an
   // env-driven origin allowlist.
   app.enableCors();
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.enableShutdownHooks();
 
   const port = Number(process.env.PORT ?? 3000);

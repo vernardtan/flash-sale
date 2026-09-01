@@ -6,6 +6,8 @@ import { HealthModule } from './health/health.module.js';
 import { SaleModule } from './sale/sale.module.js';
 import { ProductModule } from './product/product.module.js';
 import { PurchaseModule } from './purchase/purchase.module.js';
+import { CheckoutModule } from './checkout/checkout.module.js';
+import { PaymentModule } from './payment/payment.module.js';
 import { CommonModule } from './common/common.module.js';
 
 @Module({
@@ -21,7 +23,9 @@ import { CommonModule } from './common/common.module.js';
     HealthModule,
     SaleModule,
     ProductModule,
+    CheckoutModule,
     PurchaseModule,
+    PaymentModule,
     CommonModule,
   ],
 })

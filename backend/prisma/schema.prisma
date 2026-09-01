@@ -88,15 +88,16 @@ model Checkout {
 
 model Purchase {
   id        String @id @default(uuid()) @db.Uuid
-  // Authoritative one-item-per-user guarantee. The application-level early
-  // check is only an optimization; this constraint is the final word under
-  // concurrency.
-  userId    String @unique @map("user_id")
+  userId    String @map("user_id")
   productId String @map("product_id") @db.Uuid
   // The checkout this purchase fulfills. Unique: one checkout completes at
   // most once.
   requestId String @unique @map("request_id")
   quantity  Int
+  // True when the purchased product is the flash-sale product. A partial
+  // unique index enforces one flash-sale purchase per user while allowing
+  // regular products to be repurchased.
+  isFlashSale   Boolean  @default(false) @map("is_flash_sale")
   // Price snapshot captured from the checkout at purchase time.
   unitPrice     Decimal  @map("unit_price") @db.Decimal(12, 2)
   totalAmount   Decimal  @map("total_amount") @db.Decimal(12, 2)
@@ -106,6 +107,7 @@ model Purchase {
   product       Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
   checkout      Checkout @relation(fields: [requestId], references: [requestId], onDelete: Restrict)
 
+  @@index([userId])
   @@index([productId])
   @@map("purchases")
 }

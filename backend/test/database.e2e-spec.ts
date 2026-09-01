@@ -137,7 +137,7 @@ describe('Database schema (e2e)', () => {
   });
 
   describe('uniqueness', () => {
-    it('rejects a second purchase for the same user (one item per user)', async () => {
+    it('rejects a second flash-sale purchase for the same user (one item per user)', async () => {
       const product = await createProduct();
       await createCheckout(product.id, 'req-dup-1');
       await createCheckout(product.id, 'req-dup-2');
@@ -149,6 +149,7 @@ describe('Database schema (e2e)', () => {
         totalAmount: '1999.00',
         currency: 'PHP',
         paymentMethod: 'MOCK_CARD',
+        isFlashSale: true,
       };
       await prisma.purchase.create({
         data: { ...purchaseData, userId: 'user-dup', requestId: 'req-dup-1' },
@@ -160,6 +161,47 @@ describe('Database schema (e2e)', () => {
         }),
         'P2002',
       );
+    });
+
+    it('allows the same user to purchase a regular product multiple times', async () => {
+      const product = await createProduct();
+      await createCheckout(product.id, 'req-reg-1');
+      await createCheckout(product.id, 'req-reg-2');
+
+      const purchaseData = {
+        productId: product.id,
+        quantity: 1,
+        unitPrice: '1999.00',
+        totalAmount: '1999.00',
+        currency: 'PHP',
+        paymentMethod: 'MOCK_CARD',
+        isFlashSale: false,
+      };
+
+      await expect(
+        prisma.purchase.create({
+          data: {
+            ...purchaseData,
+            userId: 'user-repeat',
+            requestId: 'req-reg-1',
+          },
+        }),
+      ).resolves.toBeDefined();
+
+      await expect(
+        prisma.purchase.create({
+          data: {
+            ...purchaseData,
+            userId: 'user-repeat',
+            requestId: 'req-reg-2',
+          },
+        }),
+      ).resolves.toBeDefined();
+
+      const count = await prisma.purchase.count({
+        where: { userId: 'user-repeat' },
+      });
+      expect(count).toBe(2);
     });
 
     it('rejects duplicate checkout request IDs', async () => {

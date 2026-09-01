@@ -1,5 +1,10 @@
 import { Module } from '@nestjs/common';
+import { SaleController } from './sale.controller.js';
+import { SaleService } from './sale.service.js';
 
-// Placeholder: sale status derivation and endpoints land in Phase 4.
-@Module({})
+@Module({
+  controllers: [SaleController],
+  providers: [SaleService],
+  exports: [SaleService],
+})
 export class SaleModule {}

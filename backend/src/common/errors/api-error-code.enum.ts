@@ -1,0 +1,34 @@
+/**
+ * Stable, client-facing error codes. These are part of the API contract:
+ * the frontend and tests key off `code`, never off free-text messages or
+ * HTTP status alone.
+ */
+export enum ApiErrorCode {
+  // Sale / product availability
+  SALE_DISABLED = 'SALE_DISABLED',
+  SALE_UPCOMING = 'SALE_UPCOMING',
+  SALE_ENDED = 'SALE_ENDED',
+  SOLD_OUT = 'SOLD_OUT',
+  PRODUCT_DISABLED = 'PRODUCT_DISABLED',
+  PRODUCT_NOT_FOUND = 'PRODUCT_NOT_FOUND',
+
+  // Purchase eligibility
+  ALREADY_PURCHASED = 'ALREADY_PURCHASED',
+  PURCHASE_NOT_FOUND = 'PURCHASE_NOT_FOUND',
+
+  // Checkout / request lifecycle
+  CHECKOUT_NOT_FOUND = 'CHECKOUT_NOT_FOUND',
+  CHECKOUT_EXPIRED = 'CHECKOUT_EXPIRED',
+  REQUEST_NOT_AUTHORIZED = 'REQUEST_NOT_AUTHORIZED',
+  TRANSACTION_PROCESSING = 'TRANSACTION_PROCESSING',
+  REQUEST_ALREADY_PROCESSED = 'REQUEST_ALREADY_PROCESSED',
+
+  // Input validation
+  VALIDATION_FAILED = 'VALIDATION_FAILED',
+  INVALID_QUANTITY = 'INVALID_QUANTITY',
+  INVALID_PAYMENT_METHOD = 'INVALID_PAYMENT_METHOD',
+
+  // Infrastructure
+  RATE_LIMITED = 'RATE_LIMITED',
+  INTERNAL_ERROR = 'INTERNAL_ERROR',
+}
