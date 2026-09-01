@@ -108,8 +108,7 @@ export class ProductService {
           }
         : null,
       eligibility,
-      buyNowAvailable:
-        status === SaleStatus.ACTIVE && eligibility?.eligible !== false,
+      buyNowAvailable: eligibility?.eligible !== false,
     };
   }
 }

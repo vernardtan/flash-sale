@@ -365,6 +365,97 @@ describe('Flash Sale API (e2e)', () => {
       expect(reloaded.remainingStock).toBe(9);
     });
 
+    it('rejects reusing a failed requestId', async () => {
+      const product = await seedProduct(prisma, { stock: 5 });
+      const userId = user('failed-reuse');
+      const checkout = await createCheckout(server, product.id, userId);
+      const { requestId } = checkout.body as { requestId: string };
+
+      // Force the checkout to FAILED by exhausting stock, then attempting it.
+      await prisma.product.update({
+        where: { id: product.id },
+        data: { remainingStock: 0 },
+      });
+      await request(server)
+        .post('/api/transactions')
+        .send({ requestId, userId });
+
+      const res = await request(server)
+        .post('/api/transactions')
+        .send({ requestId, userId });
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('REQUEST_ALREADY_PROCESSED');
+
+      const reloaded = await prisma.product.findUniqueOrThrow({
+        where: { id: product.id },
+      });
+      expect(reloaded.remainingStock).toBe(0);
+      expect(await prisma.purchase.count()).toBe(0);
+    });
+
+    it('returns TRANSACTION_PROCESSING for a freshly seeded PROCESSING checkout', async () => {
+      const product = await seedProduct(prisma, { stock: 5 });
+      const userId = user('processing-fresh');
+      const requestId = crypto.randomUUID();
+      await prisma.checkout.create({
+        data: {
+          requestId,
+          userId,
+          productId: product.id,
+          quantity: 1,
+          unitPrice: product.price,
+          currency: 'PHP',
+          paymentMethod: 'GCASH',
+          status: 'PROCESSING',
+          expiresAt: new Date(Date.now() + 900_000),
+          updatedAt: new Date(),
+        },
+      });
+
+      const res = await request(server)
+        .post('/api/transactions')
+        .send({ requestId, userId });
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('TRANSACTION_PROCESSING');
+
+      const reloaded = await prisma.checkout.findUniqueOrThrow({
+        where: { requestId },
+      });
+      expect(reloaded.status).toBe('PROCESSING');
+    });
+
+    it('recovers a stale PROCESSING checkout to FAILED', async () => {
+      const product = await seedProduct(prisma, { stock: 5 });
+      const userId = user('processing-stale');
+      const requestId = crypto.randomUUID();
+      await prisma.checkout.create({
+        data: {
+          requestId,
+          userId,
+          productId: product.id,
+          quantity: 1,
+          unitPrice: product.price,
+          currency: 'PHP',
+          paymentMethod: 'GCASH',
+          status: 'PROCESSING',
+          expiresAt: new Date(Date.now() + 900_000),
+          updatedAt: new Date(Date.now() - 400_000),
+        },
+      });
+
+      const res = await request(server)
+        .post('/api/transactions')
+        .send({ requestId, userId });
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('REQUEST_ALREADY_PROCESSED');
+
+      const reloaded = await prisma.checkout.findUniqueOrThrow({
+        where: { requestId },
+      });
+      expect(reloaded.status).toBe('FAILED');
+      expect(await prisma.purchase.count()).toBe(0);
+    });
+
     it('rejects unknown requestIds', async () => {
       await seedProduct(prisma);
       const res = await request(server)
@@ -488,6 +579,33 @@ describe('Flash Sale API (e2e)', () => {
       });
       expect(res.status).toBe(400);
       expect(res.body.code).toBe('INVALID_QUANTITY');
+    });
+
+    it('rejects a regular product purchase when quantity exceeds stock', async () => {
+      const product = await seedRegularProduct(prisma, { stock: 2 });
+      const userId = user('regular-too-many');
+      const checkout = await createCheckout(server, product.id, userId, {
+        quantity: 5,
+      });
+      expect(checkout.status).toBe(201);
+      const { requestId } = checkout.body as { requestId: string };
+
+      const res = await request(server)
+        .post('/api/transactions')
+        .send({ requestId, userId });
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('SOLD_OUT');
+
+      const reloaded = await prisma.product.findUniqueOrThrow({
+        where: { id: product.id },
+      });
+      expect(reloaded.remainingStock).toBe(2);
+      expect(await prisma.purchase.count()).toBe(0);
+
+      const updated = await prisma.checkout.findUniqueOrThrow({
+        where: { requestId },
+      });
+      expect(updated.status).toBe('FAILED');
     });
   });
 });

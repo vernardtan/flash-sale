@@ -2,7 +2,7 @@ import { jest } from '@jest/globals';
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { Server } from 'node:http';
-import type { PrismaClient, Product } from '@prisma/client';
+import { PrismaClient, type Product } from '@prisma/client';
 import { createTestApp } from './test-app.js';
 import { cleanDatabase } from './test-db.js';
 
@@ -192,6 +192,58 @@ describe('Concurrency (e2e)', () => {
       where: { id: product.id },
     });
     expect(reloaded.remainingStock).toBe(9);
+    expect(await prisma.purchase.count()).toBe(1);
+
+    const checkout = await prisma.checkout.findUniqueOrThrow({
+      where: { requestId },
+    });
+    expect(checkout.status).toBe('COMPLETED');
+  });
+
+  it('returns TRANSACTION_PROCESSING immediately while the same request is PROCESSING', async () => {
+    const product = await seedProduct(prisma, 1);
+    const userId = `blocked-${RUN}`;
+    const requestId = await createCheckout(server, product.id, userId);
+
+    // Slow down the purchase phase so the checkout stays in PROCESSING long
+    // enough for a concurrent same-requestId request to observe it.
+    process.env.CHECKOUT_PROCESSING_DELAY_MS = '3000';
+
+    // Request A starts, commits PROCESSING, then waits on the injected delay.
+    const requestA = request(server)
+      .post('/api/transactions')
+      .send({ requestId, userId });
+
+    // Wait until A has committed the PROCESSING claim before firing B.
+    let claimed = false;
+    while (!claimed) {
+      const checkout = await prisma.checkout.findUnique({ where: { requestId } });
+      claimed = checkout?.status === 'PROCESSING';
+      if (!claimed) await new Promise((r) => setTimeout(r, 10));
+    }
+
+    // Request B must observe the committed PROCESSING state and return
+    // immediately — not wait for A to finish.
+    const startB = Date.now();
+    const requestB = await request(server)
+      .post('/api/transactions')
+      .send({ requestId, userId });
+    const elapsedB = Date.now() - startB;
+
+    delete process.env.CHECKOUT_PROCESSING_DELAY_MS;
+
+    expect(requestB.status).toBe(409);
+    expect(requestB.body.code).toBe('TRANSACTION_PROCESSING');
+    expect(elapsedB).toBeLessThan(500);
+
+    const resultA = await requestA;
+    expect(resultA.status).toBe(201);
+    expect(resultA.body.status).toBe('COMPLETED');
+
+    const reloaded = await prisma.product.findUniqueOrThrow({
+      where: { id: product.id },
+    });
+    expect(reloaded.remainingStock).toBe(0);
     expect(await prisma.purchase.count()).toBe(1);
 
     const checkout = await prisma.checkout.findUniqueOrThrow({

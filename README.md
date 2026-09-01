@@ -110,16 +110,21 @@ Validates product/enabled/flag/sale-window/stock/eligibility/payment method and 
 { "requestId": "â€¦", "userId": "user-123" }
 ```
 
-The final purchase operation, executed as **one PostgreSQL transaction**:
+The final purchase operation is split into **two committed phases** so that `PROCESSING` is durable before any purchase work begins:
 
 ```text
-BEGIN
+Phase 1 â€” atomic claim (single autocommit conditional UPDATE)
   â”œâ”€ Load checkout by requestId     â†’ CHECKOUT_NOT_FOUND
   â”œâ”€ Verify ownership               â†’ REQUEST_NOT_AUTHORIZED (no info leak)
-  â”œâ”€ Atomic claim: UPDATE checkouts SET status='PROCESSING'
-  â”‚    WHERE request_id=$1 AND status='PENDING' RETURNING id
-  â”‚    (0 rows â†’ re-read â†’ TRANSACTION_PROCESSING /
-  â”‚     REQUEST_ALREADY_PROCESSED / CHECKOUT_EXPIRED)
+  â””â”€ UPDATE checkouts
+       SET status='PROCESSING', updated_at=NOW()
+       WHERE request_id=$1 AND status='PENDING'
+       RETURNING id
+       (0 rows â†’ re-read durable state â†’
+        TRANSACTION_PROCESSING / REQUEST_ALREADY_PROCESSED / CHECKOUT_EXPIRED)
+
+Phase 2 â€” purchase transaction (one interactive $transaction)
+BEGIN
   â”œâ”€ Revalidate: flag, product enabled, sale window, expiry,
   â”‚    quantity (flash-sale = 1, regular > 0), user not already purchased
   â”‚    (flash-sale only)
@@ -132,7 +137,11 @@ BEGIN
 COMMIT
 ```
 
-Deterministic failures (sold out, already purchased, sale no longer valid) mark the checkout `FAILED`/`EXPIRED` and **commit** â€” the requestId is permanently spent. Unexpected errors **roll back**, returning the checkout to `PENDING` so it can never get stuck in `PROCESSING` and stock is never leaked.
+**Why the claim commits separately:** the checkout is atomically claimed before purchase processing so concurrent requests can immediately observe `PROCESSING` and return `TRANSACTION_PROCESSING` instead of waiting for the first transaction to finish.
+
+**Trade-off:** because `PROCESSING` is committed before the purchase transaction, the system must detect and recover stale `PROCESSING` checkouts if the application crashes. A configurable timeout (`CHECKOUT_PROCESSING_TIMEOUT_SECONDS`, default 300) identifies stale `PROCESSING` rows; the next access lazily transitions them to `FAILED` and returns `REQUEST_ALREADY_PROCESSED`. The requestId is intentionally spent rather than retried, eliminating any risk of executing the purchase twice if the original holder is merely slow.
+
+Deterministic failures (sold out, already purchased, sale no longer valid) mark the checkout `FAILED`/`EXPIRED` and **commit** â€” the requestId is permanently spent. Unexpected errors **roll back** the purchase transaction (stock restored, no purchase), then a best-effort follow-up marks the checkout `FAILED` so it can never remain in `PROCESSING` forever.
 
 ```json
 { "purchaseId": "â€¦", "requestId": "â€¦", "status": "COMPLETED", "quantity": 1, "unitPrice": "1999.00", "totalAmount": "1999.00", "currency": "PHP", "paymentMethod": "GCASH", "createdAt": "â€¦" }
@@ -146,9 +155,9 @@ Returns the user's purchase or 404. (userId is explicit for this assessment; pro
 
 | Threat | Defense |
 | ------ | ------- |
-| Overselling | Atomic conditional `UPDATE â€¦ WHERE remaining_stock > 0` â€” never read-then-write |
+| Overselling | Atomic conditional `UPDATE â€¦ WHERE remaining_stock >= $quantity` â€” never read-then-write; correct for flash-sale (qty=1) and regular products |
 | Duplicate flash-sale purchase per user | Partial unique index `purchases_unique_user_flashsale ON purchases(user_id) WHERE is_flash_sale = true`; violation rolls back the whole transaction, restoring stock. Regular products are not constrained. |
-| requestId reuse / double-submit | Atomic `PENDING â†’ PROCESSING` claim (row lock serializes concurrent claims); `COMPLETED`/`FAILED` are terminal |
+| requestId reuse / double-submit | Claimed `PENDING â†’ PROCESSING` commits before purchase so concurrent callers observe `TRANSACTION_PROCESSING`; `COMPLETED`/`FAILED` are terminal; stale `PROCESSING` is lazily recovered to `FAILED` |
 | Cross-user requestId theft | Ownership check before any state change |
 | Request floods | Redis fixed-window rate limit on `POST /checkouts` and `POST /transactions` (per user/IP, fail-open) |
 
@@ -179,7 +188,7 @@ Product 1 â”€â”€â”€â”€ * FlashSale
 - **products** â€” catalog + inventory. `total_stock >= 0`, `0 <= remaining_stock <= total_stock` (CHECK constraints). Price/currency with `DECIMAL(12,2)`; `is_enabled` controls whether the product can be sold at all.
 - **flash_sales** â€” sale window per product. CHECK `end_time > start_time`. Sale status (UPCOMING/ACTIVE/ENDED/SOLD_OUT/DISABLED) is **derived**, never persisted.
 - **checkouts** â€” a purchase intent. `request_id` is a server-generated unique idempotency handle created during checkout; the client receives it and includes it in the transaction request. `quantity > 0` (generic; the flash-sale rule `quantity = 1` is enforced in the business layer), price/currency **snapshot**, `payment_method` (providers mocked), status `PENDING/PROCESSING/COMPLETED/EXPIRED/CANCELLED/FAILED`, `expires_at`.
-- **purchases** â€” a fulfilled checkout. `UNIQUE(user_id)` is the authoritative one-item-per-user guarantee under concurrency; `UNIQUE(request_id)` means a checkout completes at most once. Full price snapshot.
+- **purchases** â€” a fulfilled checkout. Partial unique index `purchases(user_id) WHERE is_flash_sale = true` is the authoritative one-flash-sale-per-user guarantee under concurrency; `UNIQUE(request_id)` means a checkout completes at most once. Regular products are not constrained. Full price snapshot.
 
 Design notes:
 
@@ -227,6 +236,7 @@ See [.env.example](.env.example). Highlights:
 | `REDIS_HOST` / `REDIS_PORT`  | Redis connection                                               |
 | `FLASH_SALE_ENABLED`         | Operational kill switch for the sale                           |
 | `CHECKOUT_EXPIRATION_SECONDS`| Lifetime of a PENDING checkout (default 900)                   |
+| `CHECKOUT_PROCESSING_TIMEOUT_SECONDS` | Stale PROCESSING recovery threshold (default 300)     |
 | `RATE_LIMIT_WINDOW_SECONDS`  | Rate-limit window (default 60)                                 |
 | `RATE_LIMIT_CHECKOUT_MAX`    | Max checkout attempts per user/window (default 10)             |
 | `RATE_LIMIT_TRANSACTION_MAX` | Max transaction attempts per user/window (default 20)          |
@@ -251,9 +261,9 @@ npm run build
 
 The e2e suite covers:
 
-- **Schema guarantees**: foreign keys, `UNIQUE(user_id)` / `UNIQUE(request_id)`, stock/quantity/window CHECK constraints, seed idempotency.
-- **API behavior**: all six business endpoints â€” sale states, checkout validation, price snapshots, expiration, ownership, requestId reuse, error contract.
-- **Concurrency proofs** (`test/concurrency.e2e-spec.ts`): 50 concurrent users against stock 10 (exactly 10 purchases, stock 0, no oversell); same-user concurrent burst (exactly 1 purchase, no stock leak, nothing stuck in `PROCESSING`); same-requestId concurrent burst (exactly 1 success, rest `TRANSACTION_PROCESSING`/`REQUEST_ALREADY_PROCESSED`).
+- **Schema guarantees**: foreign keys, partial unique index `purchases(user_id) WHERE is_flash_sale = true` / `UNIQUE(request_id)`, stock/quantity/window CHECK constraints, seed idempotency.
+- **API behavior**: all six business endpoints â€” sale states, checkout validation, price snapshots, expiration, ownership, requestId reuse (fresh `PROCESSING`, terminal `COMPLETED`/`FAILED`, stale recovery), error contract.
+- **Concurrency proofs** (`test/concurrency.e2e-spec.ts`): 50 concurrent users against stock 10 (exactly 10 purchases, stock 0, no oversell); same-user concurrent burst (exactly 1 purchase, no stock leak, nothing stuck in `PROCESSING`); same-requestId concurrent burst (exactly 1 success, rest `TRANSACTION_PROCESSING`/`REQUEST_ALREADY_PROCESSED`); same-requestId while the product row is locked returns `TRANSACTION_PROCESSING` immediately without waiting for the first request.
 
 ## Security notes
 
