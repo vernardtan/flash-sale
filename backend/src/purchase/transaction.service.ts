@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { CheckoutStatus, Prisma, type Purchase } from '@prisma/client';
+import { CheckoutStatus, Prisma, type Checkout, type Purchase } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service.js';
 import { Clock } from '../common/clock.js';
 import { ApiException } from '../common/errors/api.exception.js';
@@ -57,32 +57,63 @@ export class TransactionService {
     private readonly config: ConfigService,
   ) {}
 
+  private get processingTimeoutSeconds(): number {
+    return this.config.get<number>('CHECKOUT_PROCESSING_TIMEOUT_SECONDS', 300);
+  }
+
+  private get processingDelayMs(): number {
+    return Number(this.config.get('CHECKOUT_PROCESSING_DELAY_MS') ?? '0');
+  }
+
+  /**
+   * Test-only hook: allow tests to observe the committed PROCESSING state
+   * before the purchase transaction begins. Default is 0.
+   */
+  private async applyTestDelay(): Promise<void> {
+    const delayMs = this.processingDelayMs;
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
   async execute(dto: CreateTransactionDto): Promise<TransactionResponse> {
+    const checkout = await this.loadAuthorizedCheckout(dto);
+    await this.claimOrThrow(dto.requestId);
+    await this.applyTestDelay();
+    return this.purchaseWithRecovery(checkout, dto);
+  }
+
+  private async loadAuthorizedCheckout(
+    dto: CreateTransactionDto,
+  ): Promise<Checkout> {
     const checkout = await this.prisma.checkout.findUnique({
       where: { requestId: dto.requestId },
     });
     if (!checkout) throw ApiException.checkoutNotFound();
-    if (checkout.userId !== dto.userId)
+    if (checkout.userId !== dto.userId) {
       throw ApiException.requestNotAuthorized();
-
-    const claimed = await this.tryClaimCheckout(dto.requestId);
-    if (!claimed) {
-      // Race loser or already non-PENDING. Re-read the durable state and map.
-      const current = await this.prisma.checkout.findUniqueOrThrow({
-        where: { requestId: dto.requestId },
-      });
-      throw await this.mapNonPendingStatus(current);
     }
+    return checkout;
+  }
 
-    // Test-only hook: allow tests to observe the committed PROCESSING state
-    // before the purchase transaction begins. Production default is 0.
-    const processingDelayMs = Number(
-      this.config.get('CHECKOUT_PROCESSING_DELAY_MS') ?? '0',
-    );
-    if (processingDelayMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, processingDelayMs));
-    }
+  private async claimOrThrow(requestId: string): Promise<void> {
+    const claimed = await this.tryClaimCheckout(requestId);
+    if (claimed) return;
+    // Race loser or already non-PENDING. Re-read the durable state and map.
+    const current = await this.prisma.checkout.findUniqueOrThrow({
+      where: { requestId },
+    });
+    throw await this.mapNonPendingStatus(current);
+  }
 
+  /**
+   * Runs the purchase transaction and translates any unexpected rollback
+   * into a domain error, ensuring the checkout never strands in PROCESSING.
+   */
+  private async purchaseWithRecovery(
+    checkout: Checkout,
+    dto: CreateTransactionDto,
+  ): Promise<TransactionResponse> {
     let outcome: TxOutcome;
     try {
       outcome = await this.prisma.$transaction(
@@ -98,13 +129,12 @@ export class TransactionService {
       throw this.translateTransactionError(error);
     }
 
-    if (!outcome.ok) {
-      // Business-deterministic failure already committed inside the
-      // purchase transaction. No need to translate or mark status.
-      throw outcome.error;
-    }
+    // Business-deterministic failures already committed their status inside
+    // the purchase transaction; just surface the error.
+    if (!outcome.ok) throw outcome.error;
     return this.toResponse(outcome.purchase);
   }
+
 
   /**
    * Atomically claims a PENDING checkout into PROCESSING. Runs as a single
@@ -125,11 +155,7 @@ export class TransactionService {
    * Maps a checkout that is not PENDING at claim time. Handles fresh vs stale
    * PROCESSING and all terminal states.
    */
-  private async mapNonPendingStatus(checkout: {
-    id: string;
-    status: CheckoutStatus;
-    updatedAt: Date;
-  }): Promise<ApiException> {
+  private async mapNonPendingStatus(checkout: Checkout): Promise<ApiException> {
     switch (checkout.status) {
       case CheckoutStatus.PROCESSING:
         if (this.isProcessingStale(checkout.updatedAt)) {
@@ -147,12 +173,8 @@ export class TransactionService {
   }
 
   private isProcessingStale(updatedAt: Date): boolean {
-    const timeoutSeconds = this.config.get<number>(
-      'CHECKOUT_PROCESSING_TIMEOUT_SECONDS',
-      300,
-    );
     const threshold = new Date(
-      this.clock.now().getTime() - timeoutSeconds * 1000,
+      this.clock.now().getTime() - this.processingTimeoutSeconds * 1000,
     );
     return updatedAt < threshold;
   }
@@ -163,10 +185,7 @@ export class TransactionService {
    * still be alive somewhere, so we never risk executing it twice.
    */
   private async recoverStaleProcessing(checkoutId: string): Promise<void> {
-    const timeoutSeconds = this.config.get<number>(
-      'CHECKOUT_PROCESSING_TIMEOUT_SECONDS',
-      300,
-    );
+    const timeoutSeconds = this.processingTimeoutSeconds;
     await this.prisma.$executeRaw`
       UPDATE checkouts
       SET status = 'FAILED'::"CheckoutStatus", updated_at = NOW()
@@ -194,31 +213,20 @@ export class TransactionService {
     }
   }
 
-  private async runPurchase(
+private async runPurchase(
     tx: Prisma.TransactionClient,
-    checkout: {
-      id: string;
-      userId: string;
-      productId: string;
-      quantity: number;
-      unitPrice: Prisma.Decimal;
-      currency: string;
-      paymentMethod: string;
-      requestId: string;
-      expiresAt: Date;
-    },
+    checkout: Checkout,
     dto: CreateTransactionDto,
   ): Promise<TxOutcome> {
     // 1. Expiry is checked again inside the purchase transaction because the
     //    claim committed some time ago.
     if (this.clock.now() >= checkout.expiresAt) {
-      await this.markStatus(
+      return this.failInTx(
         tx,
         checkout.id,
+        ApiException.checkoutExpired(),
         CheckoutStatus.EXPIRED,
-        CheckoutStatus.PROCESSING,
       );
-      return { ok: false, error: ApiException.checkoutExpired() };
     }
 
     let flashSale: { id: string } | null = null;
@@ -230,52 +238,20 @@ export class TransactionService {
       flashSale = result.flashSale;
     } catch (error) {
       if (error instanceof ApiException) {
-        await this.markStatus(
-          tx,
-          checkout.id,
-          CheckoutStatus.FAILED,
-          CheckoutStatus.PROCESSING,
-        );
-        return { ok: false, error };
+        return this.failInTx(tx, checkout.id, error);
       }
       throw error;
     }
 
     // Quantity rule depends on product type: flash-sale products are limited
-    // to exactly one unit; regular products must simply order a positive quantity.
-    if (flashSale && checkout.quantity !== 1) {
-      await this.markStatus(
-        tx,
-        checkout.id,
-        CheckoutStatus.FAILED,
-        CheckoutStatus.PROCESSING,
-      );
-      return { ok: false, error: ApiException.invalidQuantity() };
-    }
-    if (!flashSale && checkout.quantity <= 0) {
-      await this.markStatus(
-        tx,
-        checkout.id,
-        CheckoutStatus.FAILED,
-        CheckoutStatus.PROCESSING,
-      );
-      return { ok: false, error: ApiException.invalidQuantity() };
+    // to exactly one unit; regular products must order a positive quantity.
+    const quantityValid = flashSale ? checkout.quantity === 1 : checkout.quantity > 0;
+    if (!quantityValid) {
+      return this.failInTx(tx, checkout.id, ApiException.invalidQuantity());
     }
 
-    if (flashSale) {
-      const existingPurchase = await tx.purchase.findFirst({
-        where: { userId: dto.userId, isFlashSale: true },
-        select: { id: true },
-      });
-      if (existingPurchase) {
-        await this.markStatus(
-          tx,
-          checkout.id,
-          CheckoutStatus.FAILED,
-          CheckoutStatus.PROCESSING,
-        );
-        return { ok: false, error: ApiException.alreadyPurchased() };
-      }
+    if (flashSale && (await this.hasFlashSalePurchase(tx, dto.userId))) {
+      return this.failInTx(tx, checkout.id, ApiException.alreadyPurchased());
     }
 
     // 2. Atomic inventory decrement — the only place stock is consumed.
@@ -286,13 +262,7 @@ export class TransactionService {
         AND remaining_stock >= ${checkout.quantity}
       RETURNING id`;
     if (decremented.length === 0) {
-      await this.markStatus(
-        tx,
-        checkout.id,
-        CheckoutStatus.FAILED,
-        CheckoutStatus.PROCESSING,
-      );
-      return { ok: false, error: ApiException.soldOut() };
+      return this.failInTx(tx, checkout.id, ApiException.soldOut());
     }
 
     // 3. Create the purchase from the checkout's price snapshot. A
@@ -300,9 +270,6 @@ export class TransactionService {
     //    this statement and must roll the whole transaction back (restoring
     //    the stock), so it is intentionally NOT caught here — see
     //    translateTransactionError.
-    const totalAmount = new Prisma.Decimal(checkout.unitPrice).mul(
-      checkout.quantity,
-    );
     const purchase = await tx.purchase.create({
       data: {
         userId: checkout.userId,
@@ -311,7 +278,9 @@ export class TransactionService {
         quantity: checkout.quantity,
         isFlashSale: !!flashSale,
         unitPrice: checkout.unitPrice,
-        totalAmount,
+        totalAmount: new Prisma.Decimal(checkout.unitPrice).mul(
+          checkout.quantity,
+        ),
         currency: checkout.currency,
         paymentMethod: checkout.paymentMethod,
       },
@@ -324,6 +293,32 @@ export class TransactionService {
       CheckoutStatus.PROCESSING,
     );
     return { ok: true, purchase };
+  }
+
+  private async hasFlashSalePurchase(
+    tx: Prisma.TransactionClient,
+    userId: string,
+  ): Promise<boolean> {
+    const existing = await tx.purchase.findFirst({
+      where: { userId, isFlashSale: true },
+      select: { id: true },
+    });
+    return existing !== null;
+  }
+
+  /**
+   * Commits a terminal status transition alongside a business-deterministic
+   * failure, so the requestId becomes permanently unusable in the same
+   * transaction that produces the error.
+   */
+  private async failInTx(
+    tx: Prisma.TransactionClient,
+    checkoutId: string,
+    error: ApiException,
+    status: CheckoutStatus = CheckoutStatus.FAILED,
+  ): Promise<TxOutcome> {
+    await this.markStatus(tx, checkoutId, status, CheckoutStatus.PROCESSING);
+    return { ok: false, error };
   }
 
   /**

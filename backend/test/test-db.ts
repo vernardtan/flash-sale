@@ -66,6 +66,15 @@ export function setupTestDatabase(): Promise<PrismaClient> {
   return initialized;
 }
 
+/** Disconnect the shared test database client so Jest can exit cleanly. */
+export async function disconnectTestDatabase(): Promise<void> {
+  const client = await initialized;
+  if (client) {
+    await client.$disconnect();
+  }
+  initialized = undefined;
+}
+
 /** Delete all rows in FK-safe order. */
 export async function cleanDatabase(prisma: PrismaClient): Promise<void> {
   await prisma.purchase.deleteMany();

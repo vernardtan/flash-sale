@@ -123,7 +123,7 @@ export class ApiException extends HttpException {
 
   // ── Input validation ────────────────────────────────────────────
   static invalidQuantity(
-    message = 'Quantity must be exactly 1.',
+    message = 'Quantity must be greater than 0.',
   ): ApiException {
     return new ApiException(
       ApiErrorCode.INVALID_QUANTITY,

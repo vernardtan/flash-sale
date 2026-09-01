@@ -15,6 +15,7 @@
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 
+const REGULAR_PRODUCT_ID = '0fd601f2-e48f-4e7a-b836-b8d803804091';
 const PRODUCT_ID = '1c0e4b8a-7f6d-4e5a-9c3b-2d1f0e8a7b6c';
 const FLASH_SALE_ID = '2d1f5c9b-8a7e-4f6b-8d4c-3e2a1f9b8c7d';
 
@@ -53,6 +54,27 @@ async function main(): Promise<void> {
       },
     });
 
+    const regularProduct = await prisma.product.upsert({
+      where: { id: REGULAR_PRODUCT_ID },
+      create: {
+        id: REGULAR_PRODUCT_ID,
+        name: 'Regular Product',
+        description: 'Regular product available for purchase',
+        price: '500.00',
+        currency: 'PHP',
+        totalStock: 100,
+        remainingStock: 100,
+        isEnabled: true,
+      },
+      update: {
+        name: 'Regular Product',
+        description: 'Regular product available for purchase',
+        price: '500.00',
+        currency: 'PHP',
+        isEnabled: true,
+      },
+    });
+
     const now = Date.now();
     const startTime = new Date(now - 60 * 60 * 1000);
     const endTime = new Date(now + 7 * 24 * 60 * 60 * 1000);
@@ -69,6 +91,11 @@ async function main(): Promise<void> {
     });
 
     console.log('Seed applied:');
+    console.log(
+      `  product   ${regularProduct.id} "${regularProduct.name}" ` +
+        `stock=${regularProduct.remainingStock}/${regularProduct.totalStock} ` +
+        `${regularProduct.currency} ${regularProduct.price} enabled=${regularProduct.isEnabled}`,
+    );
     console.log(
       `  product   ${product.id} "${product.name}" ` +
         `stock=${product.remainingStock}/${product.totalStock} ` +

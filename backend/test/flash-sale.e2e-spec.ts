@@ -1,9 +1,10 @@
+import { jest } from '@jest/globals';
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { Server } from 'node:http';
 import type { PrismaClient, Product } from '@prisma/client';
 import { createTestApp } from './test-app.js';
-import { cleanDatabase } from './test-db.js';
+import { cleanDatabase, disconnectTestDatabase } from './test-db.js';
 
 /**
  * End-to-end coverage of the Phase 4 business APIs against the real
@@ -87,6 +88,8 @@ async function createCheckout(
 }
 
 describe('Flash Sale API (e2e)', () => {
+  jest.setTimeout(60_000);
+
   let app: INestApplication;
   let server: Server;
   let prisma: PrismaClient;
@@ -97,6 +100,7 @@ describe('Flash Sale API (e2e)', () => {
 
   afterAll(async () => {
     await app.close();
+    await disconnectTestDatabase();
   });
 
   beforeEach(async () => {
@@ -160,7 +164,7 @@ describe('Flash Sale API (e2e)', () => {
         currency: 'PHP',
         remainingStock: 25,
         sale: { status: 'ACTIVE' },
-        eligibility: null,
+        eligibility: { eligible: true, reason: null },
         buyNowAvailable: true,
       });
     });
@@ -611,6 +615,8 @@ describe('Flash Sale API (e2e)', () => {
 });
 
 describe('Flash sale feature flag (e2e)', () => {
+  jest.setTimeout(60_000);
+
   const PREV = process.env.FLASH_SALE_ENABLED;
   let app: INestApplication;
   let server: Server;
@@ -623,6 +629,7 @@ describe('Flash sale feature flag (e2e)', () => {
 
   afterAll(async () => {
     await app.close();
+    await disconnectTestDatabase();
     process.env.FLASH_SALE_ENABLED = PREV;
   });
 

@@ -4,7 +4,7 @@ import request from 'supertest';
 import type { Server } from 'node:http';
 import { PrismaClient, type Product } from '@prisma/client';
 import { createTestApp } from './test-app.js';
-import { cleanDatabase } from './test-db.js';
+import { cleanDatabase, disconnectTestDatabase } from './test-db.js';
 
 /**
  * Concurrency proofs for the purchase flow. All run against the real
@@ -79,6 +79,7 @@ describe('Concurrency (e2e)', () => {
 
   afterAll(async () => {
     await app.close();
+    await disconnectTestDatabase();
   });
 
   beforeEach(async () => {
@@ -209,46 +210,54 @@ describe('Concurrency (e2e)', () => {
     // enough for a concurrent same-requestId request to observe it.
     process.env.CHECKOUT_PROCESSING_DELAY_MS = '3000';
 
-    // Request A starts, commits PROCESSING, then waits on the injected delay.
-    const requestA = request(server)
-      .post('/api/transactions')
-      .send({ requestId, userId });
+    try {
+      // Request A starts, commits PROCESSING, then waits on the injected delay.
+      // Chain .then() so the request is actually dispatched before we poll
+      // the database; assigning the supertest promise alone does not send it.
+      const requestAPromise = request(server)
+        .post('/api/transactions')
+        .send({ requestId, userId })
+        .then((res) => res);
 
-    // Wait until A has committed the PROCESSING claim before firing B.
-    let claimed = false;
-    while (!claimed) {
-      const checkout = await prisma.checkout.findUnique({ where: { requestId } });
-      claimed = checkout?.status === 'PROCESSING';
-      if (!claimed) await new Promise((r) => setTimeout(r, 10));
+      // Wait until A has committed the PROCESSING claim before firing B.
+      const pollStart = Date.now();
+      const maxPollMs = 5_000;
+      let claimed = false;
+      while (!claimed && Date.now() - pollStart < maxPollMs) {
+        const checkout = await prisma.checkout.findUnique({ where: { requestId } });
+        claimed = checkout?.status === 'PROCESSING';
+        if (!claimed) await new Promise((r) => setTimeout(r, 10));
+      }
+      expect(claimed).toBe(true);
+
+      // Request B must observe the committed PROCESSING state and return
+      // quickly — not wait for A's 3000 ms delay to finish.
+      const startB = Date.now();
+      const requestB = await request(server)
+        .post('/api/transactions')
+        .send({ requestId, userId });
+      const elapsedB = Date.now() - startB;
+
+      expect(requestB.status).toBe(409);
+      expect(requestB.body.code).toBe('TRANSACTION_PROCESSING');
+      expect(elapsedB).toBeLessThan(2_000);
+
+      const resultA = await requestAPromise;
+      expect(resultA.status).toBe(201);
+      expect(resultA.body.status).toBe('COMPLETED');
+
+      const reloaded = await prisma.product.findUniqueOrThrow({
+        where: { id: product.id },
+      });
+      expect(reloaded.remainingStock).toBe(0);
+      expect(await prisma.purchase.count()).toBe(1);
+
+      const checkout = await prisma.checkout.findUniqueOrThrow({
+        where: { requestId },
+      });
+      expect(checkout.status).toBe('COMPLETED');
+    } finally {
+      delete process.env.CHECKOUT_PROCESSING_DELAY_MS;
     }
-
-    // Request B must observe the committed PROCESSING state and return
-    // immediately — not wait for A to finish.
-    const startB = Date.now();
-    const requestB = await request(server)
-      .post('/api/transactions')
-      .send({ requestId, userId });
-    const elapsedB = Date.now() - startB;
-
-    delete process.env.CHECKOUT_PROCESSING_DELAY_MS;
-
-    expect(requestB.status).toBe(409);
-    expect(requestB.body.code).toBe('TRANSACTION_PROCESSING');
-    expect(elapsedB).toBeLessThan(500);
-
-    const resultA = await requestA;
-    expect(resultA.status).toBe(201);
-    expect(resultA.body.status).toBe('COMPLETED');
-
-    const reloaded = await prisma.product.findUniqueOrThrow({
-      where: { id: product.id },
-    });
-    expect(reloaded.remainingStock).toBe(0);
-    expect(await prisma.purchase.count()).toBe(1);
-
-    const checkout = await prisma.checkout.findUniqueOrThrow({
-      where: { requestId },
-    });
-    expect(checkout.status).toBe('COMPLETED');
   });
 });

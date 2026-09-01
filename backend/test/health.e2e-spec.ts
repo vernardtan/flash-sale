@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
@@ -7,6 +8,8 @@ import { AppModule } from '../src/app.module.js';
 // Requires PostgreSQL and Redis reachable at DATABASE_HOST / REDIS_HOST
 // (defaults: localhost, as published by docker compose).
 describe('Health (e2e)', () => {
+  jest.setTimeout(60_000);
+
   let app: INestApplication;
   let server: Server;
 

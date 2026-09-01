@@ -366,19 +366,22 @@ describe('Database schema (e2e)', () => {
       runSeed();
       runSeed();
 
-      const products = await prisma.product.findMany();
+      const products = await prisma.product.findMany({ orderBy: { createdAt: 'asc' } });
       const flashSales = await prisma.flashSale.findMany();
-      expect(products).toHaveLength(1);
+      // Seed now creates both a flash-sale and a regular product.
+      expect(products).toHaveLength(2);
       expect(flashSales).toHaveLength(1);
-      expect(products[0]).toMatchObject({
+
+      const flashProduct = products.find((p) => p.name === 'Limited Edition Product')!;
+      expect(flashProduct).toMatchObject({
         name: 'Limited Edition Product',
         currency: 'PHP',
         totalStock: 100,
         remainingStock: 100,
         isEnabled: true,
       });
-      expect(products[0].price.toFixed(2)).toBe('1999.00');
-      expect(flashSales[0].productId).toBe(products[0].id);
+      expect(flashProduct.price.toFixed(2)).toBe('1999.00');
+      expect(flashSales[0].productId).toBe(flashProduct.id);
       expect(flashSales[0].endTime.getTime()).toBeGreaterThan(
         flashSales[0].startTime.getTime(),
       );

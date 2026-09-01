@@ -1,14 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { randomUUID } from 'node:crypto';
-import { PrismaService } from '../database/prisma.service.js';
 import { Clock } from '../common/clock.js';
+import { randomUUID } from 'node:crypto';
 import { ApiException } from '../common/errors/api.exception.js';
+import type { FlashSale, Prisma, Product } from '@prisma/client';
+import { PrismaService } from '../database/prisma.service.js';
 import { SaleService } from '../sale/sale.service.js';
 import { isValidPaymentMethod } from '../payment/payment-methods.js';
 import { CreateCheckoutDto } from './dto/create-checkout.dto.js';
 import { CheckoutResponse } from './dto/checkout-response.dto.js';
-import type { FlashSale, Prisma, Product } from '@prisma/client';
 
 @Injectable()
 export class CheckoutService {
@@ -27,7 +27,8 @@ export class CheckoutService {
    * acts as the idempotency handle for the subsequent transaction.
    */
   async createCheckout(dto: CreateCheckoutDto): Promise<CheckoutResponse> {
-    const { product, flashSale } = await this.saleService.assertPurchasable(dto.productId);
+    const { product, flashSale } = await this.saleService.assertPurchasable(
+      dto.productId);
     await this.validate(dto, flashSale);
     const checkout = await this.saveCheckout(dto, product);
 
@@ -49,12 +50,12 @@ export class CheckoutService {
       throw ApiException.invalidPaymentMethod();
     }
     if (!flashSale && dto.quantity <= 0) {
-      throw ApiException.invalidQuantity('Quantity must be greater than 0.');
+      throw ApiException.invalidQuantity();
     }
 
     if (flashSale) {
       if (dto.quantity !== 1) throw ApiException.invalidQuantity(
-        'Quantity must be exactly 1 for the flash-sale product.',
+        'Quantity must be exactly 1 for the flash-sale product.'
       );
 
       const existingPurchase = await this.prisma.purchase.findFirst({

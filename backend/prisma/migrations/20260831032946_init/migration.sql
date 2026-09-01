@@ -109,6 +109,6 @@ ALTER TABLE "products" ADD CONSTRAINT "products_remaining_stock_within_total" CH
 ALTER TABLE "flash_sales" ADD CONSTRAINT "flash_sales_end_after_start" CHECK ("end_time" > "start_time");
 
 -- Quantities are generic (> 0). The flash-sale rule quantity = 1 is a
--- business rule enforced in the application layer (Phase 4).
+-- business rule enforced in the application layer.
 ALTER TABLE "checkouts" ADD CONSTRAINT "checkouts_quantity_positive" CHECK ("quantity" > 0);
 ALTER TABLE "purchases" ADD CONSTRAINT "purchases_quantity_positive" CHECK ("quantity" > 0);

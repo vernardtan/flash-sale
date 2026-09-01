@@ -2,30 +2,8 @@ import { Injectable } from '@nestjs/common';
 import type { FlashSale, Product } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service.js';
 import { SaleService, SaleStatus } from '../sale/sale.service.js';
-
-export interface ProductEligibility {
-  eligible: boolean;
-  reason: string | null;
-}
-
-export interface ProductResponse {
-  id: string;
-  name: string;
-  description: string | null;
-  /** Money serialized as a fixed-precision string, never a float. */
-  price: string;
-  currency: string;
-  totalStock: number;
-  remainingStock: number;
-  sale: {
-    status: SaleStatus;
-    startTime: string;
-    endTime: string;
-  } | null;
-  /** Present only when a userId query parameter was supplied. */
-  eligibility: ProductEligibility | null;
-  buyNowAvailable: boolean;
-}
+import { ApiErrorCode } from '../common/errors/api-error-code.enum.js';
+import { ProductEligibility, ProductResponse } from './dto/product.dto.js';
 
 @Injectable()
 export class ProductService {
@@ -43,6 +21,7 @@ export class ProductService {
   async listProducts(
     userId?: string,
   ): Promise<{ products: ProductResponse[] }> {
+
     const products = await this.prisma.product.findMany({
       orderBy: { createdAt: 'asc' },
       include: {
@@ -66,7 +45,6 @@ export class ProductService {
         this.toResponse(
           product,
           product.flashSales[0] ?? null,
-          userId,
           purchasedFlashSaleIds,
         ),
       ),
@@ -76,21 +54,21 @@ export class ProductService {
   private toResponse(
     product: Product,
     flashSale: FlashSale | null,
-    userId: string | undefined,
     purchasedFlashSaleIds: Set<string> | null,
   ): ProductResponse {
+
     const status = this.saleService.deriveStatus(product, flashSale);
 
-    let eligibility: ProductEligibility | null = null;
-    if (userId) {
+    let eligibility: ProductEligibility = { eligible: true, reason: null };
+    if (flashSale) {
       // Only flash-sale products carry the one-per-user restriction; regular
       // products may be repurchased freely.
-      const alreadyPurchased =
-        flashSale && (purchasedFlashSaleIds?.has(product.id) ?? false);
+      const alreadyPurchased = purchasedFlashSaleIds?.has(product.id) ?? false;
       eligibility = alreadyPurchased
-        ? { eligible: false, reason: 'ALREADY_PURCHASED' }
+        ? { eligible: false, reason: ApiErrorCode.ALREADY_PURCHASED }
         : { eligible: true, reason: null };
     }
+    const isBuyNowAvailable = (status === SaleStatus.ACTIVE || flashSale === null) && eligibility?.eligible === true;
 
     return {
       id: product.id,
@@ -108,7 +86,7 @@ export class ProductService {
           }
         : null,
       eligibility,
-      buyNowAvailable: eligibility?.eligible !== false,
+      buyNowAvailable: isBuyNowAvailable,
     };
   }
 }
