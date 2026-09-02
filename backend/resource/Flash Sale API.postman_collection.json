@@ -1,0 +1,535 @@
+{
+	"info": {
+		"_postman_id": "2b1df27c-97a3-43e7-b6c6-3ffc9fd8eb81",
+		"name": "Flash Sale API - Basic Load Testing",
+		"description": "Postman collection for the Bookipi High-Throughput Flash Sale System. Includes smoke flow, basic sequential load flow, idempotency checks, wrong-user protection, and a same-requestId concurrency-oriented scenario.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "01 - Smoke Flow",
+			"item": [
+				{
+					"name": "Get Products",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+									"const body = pm.response.json();",
+									"const products = body.products || [];",
+									"const flash = products.find(p => p.sale);",
+									"pm.test('Flash-sale product exists', () => pm.expect(flash).to.exist);",
+									"if (flash) pm.collectionVariables.set('productId', flash.id);"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/products",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"products"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Sale Status",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+									"pm.test('Status is present', () => pm.expect(pm.response.json().status).to.be.a('string'));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/sale/status",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"sale",
+								"status"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Payment Methods",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+									"pm.test('Payment methods returned', () => pm.expect(pm.response.json().paymentMethods).to.be.an('array'));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/payment-methods",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"payment-methods"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Create Flash-Sale Checkout",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+									"const body = pm.response.json();",
+									"pm.collectionVariables.set('requestId', body.requestId);",
+									"pm.collectionVariables.set('checkoutId', body.checkoutId);",
+									"pm.test('requestId returned', () => pm.expect(body.requestId).to.be.a('string'));",
+									"pm.test('Quantity is 1', () => pm.expect(body.quantity).to.eql(1));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"userId\": \"{{userId}}\", \"productId\": \"{{productId}}\", \"quantity\": 1, \"paymentMethod\": \"{{paymentMethod}}\"}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/checkouts",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"checkouts"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Place Order",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+									"pm.test('Transaction completed', () => pm.expect(pm.response.json().status).to.eql('COMPLETED'));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"requestId\": \"{{requestId}}\", \"userId\": \"{{userId}}\"}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/transactions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"transactions"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Purchase",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+									"pm.test('Purchase returned', () => pm.expect(pm.response.json().purchaseId).to.be.a('string'));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/purchases/{{userId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"purchases",
+								"{{userId}}"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "02 - Basic Load - Checkout + Transaction",
+			"item": [
+				{
+					"name": "Create Checkout - Load User",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Checkout created', () => pm.response.to.have.status(201));",
+									"if (pm.response.code === 201) {",
+									"  const body = pm.response.json();",
+									"  pm.variables.set('iterationRequestId', body.requestId);",
+									"  pm.test('requestId returned', () => pm.expect(body.requestId).to.be.a('string'));",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"userId\": \"{{iterationUserId}}\", \"productId\": \"{{productId}}\", \"quantity\": 1, \"paymentMethod\": \"{{paymentMethod}}\"}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/checkouts",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"checkouts"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Transaction - Load User",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Expected result', () => pm.expect([201, 409]).to.include(pm.response.code));",
+									"if (pm.response.code === 409) pm.expect(['SOLD_OUT','ALREADY_PURCHASED','TRANSACTION_PROCESSING','REQUEST_ALREADY_PROCESSED']).to.include(pm.response.json().code);"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"requestId\": \"{{iterationRequestId}}\", \"userId\": \"{{iterationUserId}}\"}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/transactions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"transactions"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Each Collection Runner iteration generates a NEW unique userId, creates a checkout, captures its requestId, and submits the transaction. This prevents all load iterations from using the same user. Example: run 50 iterations with a fresh/active flash-sale product. If stock is lower than the iteration count, SOLD_OUT responses are expected.",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"// Generate a unique user for EVERY load-test iteration.",
+							"const itr = pm.info.iteration;",
+							"const requestName = pm.info.requestName;",
+							"const userId = `load-user-${Date.now()}-${itr}`;",
+							"if (pm.info.requestName === 'Create Checkout - Load User') {",
+							"    pm.variables.set('iterationUserId', userId);",
+							"}",
+							"console.log(`Load iteration ${itr}: userId=${userId}`);"
+						]
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							""
+						]
+					}
+				}
+			]
+		},
+		{
+			"name": "03 - Idempotency & Security",
+			"item": [
+				{
+					"name": "Reuse Completed RequestId",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('RequestId is single-use', () => pm.expect(pm.response.code).to.eql(409));",
+									"pm.test('Correct idempotency error', () => pm.expect(pm.response.json().code).to.eql('REQUEST_ALREADY_PROCESSED'));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"requestId\": \"{{requestId}}\", \"userId\": \"{{userId}}\"}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/transactions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"transactions"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Wrong User Cannot Use RequestId",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Unauthorized request rejected', () => pm.expect(pm.response.code).to.eql(403));",
+									"pm.test('Correct authorization error', () => pm.expect(pm.response.json().code).to.eql('REQUEST_NOT_AUTHORIZED'));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"requestId\": \"{{requestId}}\", \"userId\": \"unauthorized-user-{{$randomUUID}}\"}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/transactions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"transactions"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "04 - Same RequestId Concurrency Preparation",
+			"item": [
+				{
+					"name": "Create Checkout for Concurrency",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Checkout created', () => pm.response.to.have.status(201));",
+									"const body = pm.response.json();",
+									"pm.collectionVariables.set('concurrencyRequestId', body.requestId);",
+									"pm.collectionVariables.set('concurrencyUserId', body.userId || '');",
+									"// The API response currently does not return userId, so use the fixed value below if needed.",
+									"pm.collectionVariables.set('concurrencyUserId', 'concurrency-user-fixed');"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"userId\": \"concurrency-user-fixed\", \"productId\": \"{{productId}}\", \"quantity\": 1, \"paymentMethod\": \"{{paymentMethod}}\"}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/checkouts",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"checkouts"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Place Order - Shared RequestId",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Valid concurrency result', () => pm.expect([201,409]).to.include(pm.response.code));",
+									"if (pm.response.code === 409) pm.expect(['TRANSACTION_PROCESSING','REQUEST_ALREADY_PROCESSED']).to.include(pm.response.json().code);"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"requestId\": \"{{concurrencyRequestId}}\", \"userId\": \"{{concurrencyUserId}}\"}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/transactions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"transactions"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Prepare one requestId for concurrent execution. To prove TRANSACTION_PROCESSING, configure CHECKOUT_PROCESSING_DELAY_MS on the backend (e.g. 3000) and send the Place Order request concurrently from multiple clients/runs while the first request is processing."
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:3000/api"
+		},
+		{
+			"key": "productId",
+			"value": ""
+		},
+		{
+			"key": "userId",
+			"value": "postman-user"
+		},
+		{
+			"key": "requestId",
+			"value": ""
+		},
+		{
+			"key": "paymentMethod",
+			"value": "GCASH"
+		},
+		{
+			"key": "loadUserPrefix",
+			"value": "load-user"
+		},
+		{
+			"key": "checkoutId",
+			"value": ""
+		},
+		{
+			"key": "concurrencyRequestId",
+			"value": ""
+		},
+		{
+			"key": "concurrencyUserId",
+			"value": ""
+		}
+	]
+}

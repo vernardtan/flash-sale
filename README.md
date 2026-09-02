@@ -310,6 +310,27 @@ The e2e suite covers:
 - **API behavior**: all six business endpoints — sale states, checkout validation, price snapshots, expiration, ownership, requestId reuse (fresh `PROCESSING`, terminal `COMPLETED`/`FAILED`, stale recovery), error contract.
 - **Concurrency proofs** (`test/concurrency.e2e-spec.ts`): 50 concurrent users against stock 10 (exactly 10 purchases, stock 0, no oversell); same-user concurrent burst (exactly 1 purchase, no stock leak, nothing stuck in `PROCESSING`); same-requestId concurrent burst (exactly 1 success, rest `TRANSACTION_PROCESSING`/`REQUEST_ALREADY_PROCESSED`); same-requestId while the product row is locked returns `TRANSACTION_PROCESSING` immediately without waiting for the first request.
 
+## Load test
+A Postman collection is available at:
+
+`backend/resource/flash-sale-basic-load.postman_collection.json`
+
+The collection includes:
+
+Basic API flow
+Checkout and transaction testing
+Idempotency testing
+RequestId ownership validation
+Multi-user load testing
+
+The load test generates a unique userId per iteration.
+
+Import the collection into Postman and run:
+
+`02 - Basic Load - Checkout + Transaction`
+
+using the Collection Runner.
+
 ## Notes
 
 - DTO validation (`class-validator` + global `ValidationPipe`, unknown fields stripped).
