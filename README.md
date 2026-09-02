@@ -317,11 +317,11 @@ A Postman collection is available at:
 
 The collection includes:
 
-Basic API flow
-Checkout and transaction testing
-Idempotency testing
-RequestId ownership validation
-Multi-user load testing
+- Basic API flow
+- Checkout and transaction testing
+- Idempotency testing
+- RequestId ownership validation
+- Multi-user load testing
 
 The load test generates a unique userId per iteration.
 
