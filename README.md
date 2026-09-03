@@ -24,6 +24,7 @@ On startup the backend container automatically:
 
 ## Architecture
 
+![Architecture Diagram](./backend/resource/diagrams/Architecture.png)
 ```text
                          ┌──────────────────────┐
                          │      React UI        │
@@ -278,6 +279,8 @@ See [.env.example](.env.example). Highlights:
 | Variable                     | Purpose                                                        |
 | ---------------------------- | -------------------------------------------------------------- |
 | `DATABASE_URL`               | Prisma connection string (postgres service in compose)         |
+| `DATABASE_CONNECTION_LIMIT`  | Max Prisma pool connections per backend instance (default 20)  |
+| `DATABASE_POOL_TIMEOUT`      | Seconds a query waits for a free connection (default 30)       |
 | `DATABASE_*`                 | Credentials for the postgres container itself                  |
 | `REDIS_HOST` / `REDIS_PORT`  | Redis connection                                               |
 | `FLASH_SALE_ENABLED`         | Operational kill switch for the sale                           |
@@ -313,7 +316,7 @@ The e2e suite covers:
 ## Load test
 A Postman collection is available at:
 
-`backend/resource/flash-sale-basic-load.postman_collection.json`
+[Postman Collection](./backend/resource/Flash%20Sale%20API.postman_collection.json)
 
 The collection includes:
 

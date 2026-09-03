@@ -39,7 +39,7 @@ services:
       # localhost for host-side tooling (prisma migrate, tests).
       DATABASE_HOST: postgres
       REDIS_HOST: redis
-      DATABASE_URL: postgresql://${DATABASE_USER:-flash_sale}:${DATABASE_PASSWORD:-flash_sale_dev}@postgres:5432/${DATABASE_NAME:-flash_sale}
+      DATABASE_URL: postgresql://${DATABASE_USER:-flash_sale}:${DATABASE_PASSWORD:-flash_sale_dev}@postgres:5432/${DATABASE_NAME:-flash_sale}?connection_limit=${DATABASE_CONNECTION_LIMIT:-20}&pool_timeout=${DATABASE_POOL_TIMEOUT:-30}
     ports:
       - '3000:3000'
     depends_on:
