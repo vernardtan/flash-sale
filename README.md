@@ -24,50 +24,10 @@ On startup the backend container automatically:
 
 ## Architecture
 
-![Architecture Diagram](./backend/resource/diagrams/Architecture.png)
-```text
-                         ┌──────────────────────┐
-                         │      React UI        │
-                         │                      │
-                         │ Product / Checkout   │
-                         │ Payment / Result     │
-                         └──────────┬───────────┘
-                                    │
-                              HTTP / REST
-                                    │
-                                    ▼
-                    ┌──────────────────────────────┐
-                    │        NestJS API            │
-                    │                              │
-                    │ Product Controller           │
-                    │ Sale Controller              │
-                    │ Checkout Controller           │
-                    │ Transaction Controller       │
-                    │ Purchase Controller           │
-                    └──────────────┬───────────────┘
-                                   │
-                    ┌──────────────┴──────────────┐
-                    │                             │
-                    ▼                             ▼
-          ┌─────────────────┐           ┌─────────────────────┐
-          │      Redis      │           │     PostgreSQL      │
-          │                 │           │                     │
-          │ Rate Limiting   │           │   Source of Truth   │
-          │                 │           │                     │
-          └─────────────────┘           └──────────┬──────────┘
-                                                   │
-                         ┌─────────────────────────┼────────────────────┐
-                         │                         │                    │
-                         ▼                         ▼                    ▼
-                  ┌─────────────┐           ┌─────────────┐      ┌─────────────┐
-                  │  Products   │           │  Checkouts  │      │  Purchases  │
-                  │             │           │             │      │             │
-                  │ price       │           │ requestId   │      │ userId      │
-                  │ stock       │           │ userId      │      │ productId   │
-                  │ enabled     │           │ status      │      │ quantity    │
-                  └─────────────┘           │ expiresAt   │      │ price       │
-                                           └─────────────┘      └─────────────┘
-```
+![Architecture diagram](./backend/resource/diagrams/Architecture.png)
+
+## High-level Business flow
+![High level flow diagram](./backend/resource/diagrams/HighLevelFlow.png)
 
 - **PostgreSQL is the source of truth** for products, inventory, flash sales, checkouts, and purchases. All correctness invariants (no overselling, one flash-sale item per user, single-use requestId) are enforced by the database.
 - **Redis is supporting infrastructure only**: fixed-window rate limiting on the write endpoints. If Redis is down the limiter fails open — protection degrades, correctness does not.
@@ -129,61 +89,13 @@ Validates product/enabled/flag/sale-window/stock/eligibility/payment method and 
 ```
 
 The final purchase operation is split into **two committed phases** so that `PROCESSING` is durable before any purchase work begins:
-
-```text
-                 POST /transactions
-                         │
-                         ▼
-               ┌──────────────────┐
-               │ Find Checkout    │
-               └────────┬─────────┘
-                        │
-                        ▼
-               Ownership Validation
-                        │
-                        ▼
-                Check Checkout State
-                        │
-          ┌─────────────┼──────────────┐
-          │             │              │
-          ▼             ▼              ▼
-      COMPLETED       FAILED       PROCESSING
-          │             │              │
-          ▼             ▼              ▼
-    Already Used   Already Used   Still Processing
-                                     │
-                                     ▼
-                          TRANSACTION_PROCESSING
-```
+![Transaction Diagram](./backend/resource/diagrams/Transaction.png)
 
 For a new `PENDING` request:
-```text
-                    PENDING
-                       │
-                       ▼
-             ┌──────────────────┐
-             │ Atomic Claim     │
-             │                  │
-             │ PENDING →        │
-             │ PROCESSING       │
-             └────────┬─────────┘
-                      │
-                   COMMIT
-                      │
-                      ▼
-                 PROCESSING
-                      │
-                      ▼
-             Purchase Transaction
-                      │
-          ┌───────────┴────────────┐
-          │                        │
-          ▼                        ▼
-       SUCCESS                  FAILURE
-          │                        │
-          ▼                        ▼
-      COMPLETED                  FAILED
-```
+![Request Lifecycle Diagram](./backend/resource/diagrams/RequestLifecycle.png)
+
+For inventory concurrency:
+![Inventory Concurrency Diagram](./backend/resource/diagrams/InventoryConcurrency.png)
 
 **Why the claim commits separately:** the checkout is atomically claimed before purchase processing so concurrent requests can immediately observe `PROCESSING` and return `TRANSACTION_PROCESSING` instead of waiting for the first transaction to finish.
 
